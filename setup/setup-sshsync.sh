@@ -4,9 +4,18 @@ set -euo pipefail
 ###############################################################################
 # Konfiguration
 ###############################################################################
-GITHUB_USER="GITHUB_USERNAME"
-LOCAL_USER="user"              # Linux-User, der per SSH-Key rein darf
-SYNC_INTERVAL="30min"          # systemd-Intervall, z.B. "15min", "1h", "6h"
+# Fallback-Defaults (werden genutzt, wenn keine Parameter übergeben werden)
+GITHUB_USER_DEFAULT="GITHUB_USERNAME"
+LOCAL_USER_DEFAULT="user"        # Linux-User, der per SSH-Key rein darf
+SYNC_INTERVAL_DEFAULT="30min"    # systemd-Intervall, z.B. "15min", "1h", "6h"
+
+# Parameter:
+#   $1 = GitHub Username
+#   $2 = lokaler Linux-User
+#   $3 = Sync-Intervall für systemd-Timer
+GITHUB_USER="${1:-$GITHUB_USER_DEFAULT}"
+LOCAL_USER="${2:-$LOCAL_USER_DEFAULT}"
+SYNC_INTERVAL="${3:-$SYNC_INTERVAL_DEFAULT}"
 
 ###############################################################################
 # Root-Check
