@@ -31,6 +31,21 @@ journalctl -u github-keys-<username>.service
 journalctl -u github-keys-<username>.timer
 ```
 
+## Ausführung prüfen und keys anzeigen
+```bash
+read -rp "SSH-User: " U && \
+H=$(getent passwd "$U" | cut -d: -f6) && \
+i=1 && \
+sudo awk '{print}' "$H/.ssh/authorized_keys" | while read -r key; do
+    echo "ssh key #$i"
+    echo "sha256: $(echo "$key" | ssh-keygen -lf - | awk '{print $2}')"
+    echo "pubkey: $key"
+    echo
+    i=$((i+1))
+done && \
+echo "== Letzter Sync ==" && \
+sudo journalctl -u "github-keys-$U.service" -n 3 --no-pager
+```
 ### Wichtiger Hinweis
 
 Dies ist ein privates Projekt und ausschließlich für Testzwecke gedacht.  
