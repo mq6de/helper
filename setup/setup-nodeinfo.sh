@@ -94,15 +94,68 @@ ipv4_addr="$(
 [[ -z "${ipv4_addr:-}" ]] && ipv4_addr="none"
 [[ -z "${default_gw4:-}" ]] && default_gw4="none"
 
-dns_servers="$(
-  awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | paste -sd ', ' -
-)"
-[[ -z "${dns_servers:-}" ]] && dns_servers="none"
-
 ipv6_addrs="$(
   ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {print $2}' | paste -sd ', ' -
 )"
 [[ -z "${ipv6_addrs:-}" ]] && ipv6_addrs="none"
+
+# --- DNS -------------------------------------------------------------------
+
+dns_servers="$(get_dns_servers)"
+
+get_dns_servers() {
+  local dns=""
+
+  # systemd-resolved / resolvectl
+  if command -v resolvectl >/dev/null 2>&1; then
+    dns="$(
+      resolvectl dns 2>/dev/null \
+        | sed 's/^Global:[[:space:]]*//' \
+        | sed 's/^[A-Za-z0-9_.:-]\+:[[:space:]]*//' \
+        | tr ' ' '\n' \
+        | grep -E '^[0-9a-fA-F:.]+$' \
+        | awk '!seen[$0]++' \
+        | paste -sd ', ' -
+    )"
+  fi
+
+  # Fallback für ältere Systeme
+  if [[ -z "$dns" ]] && command -v systemd-resolve >/dev/null 2>&1; then
+    dns="$(
+      systemd-resolve --status 2>/dev/null \
+        | awk '
+            /DNS Servers:/ {
+              sub(/.*DNS Servers:[[:space:]]*/, "", $0)
+              print
+              capture=1
+              next
+            }
+            capture && /^[[:space:]]+[0-9a-fA-F:.]+$/ {
+              gsub(/^[[:space:]]+/, "", $0)
+              print
+              next
+            }
+            capture { capture=0 }
+          ' \
+        | awk '!seen[$0]++' \
+        | paste -sd ', ' -
+    )"
+  fi
+
+  # Letzter Fallback: /etc/resolv.conf, aber Stub-Resolver rausfiltern
+  if [[ -z "$dns" ]]; then
+    dns="$(
+      awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null \
+        | grep -vE '^(127\.0\.0\.53|127\.0\.0\.1|::1)$' \
+        | awk '!seen[$0]++' \
+        | paste -sd ', ' -
+    )"
+  fi
+
+  [[ -n "$dns" ]] && echo "$dns" || echo "none"
+}
+
+dns_servers="$(get_dns_servers)"
 
 # --- Virtualization ---------------------------------------------------------
 
