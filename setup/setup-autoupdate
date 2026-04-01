@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Configure Ubuntu unattended-upgrades with local override files.
+#
+# Design goals:
+# - do not replace /etc/apt/apt.conf.d/50unattended-upgrades
+# - do not reset Ubuntu's default Allowed-Origins / ESM behavior
+# - do not overwrite /etc/apt/apt.conf.d/20auto-upgrades blindly
+# - allow optional automatic reboot configuration
+# - validate inputs before writing APT config
+# - run a real dry-run without masking failures
+#
+# This script is intentionally conservative:
+# it enables unattended-upgrades if needed and only sets local overrides
+# for the options that are actually requested.
+
+# -------------------------
+# User-tunable variables
+# -------------------------
+
+AUTO_REBOOT="${AUTO_REBOOT:-yes}"                   # yes|no|true|false|1|0
+AUTO_REBOOT_TIME="${AUTO_REBOOT_TIME:-03:00}"      # HH:MM, only validated if reboot is enabled
+ENABLE_VERBOSE_APT="${ENABLE_VERBOSE_APT:-1}"      # 0|1
+AUTOCLEAN_INTERVAL_DAYS="${AUTOCLEAN_INTERVAL_DAYS:-7}"  # integer >= 0
+
+INSTALL_APT_LISTCHANGES="${INSTALL_APT_LISTCHANGES:-yes}" # yes|no|true|false|1|0
+
+# File names intentionally sort after the packaged defaults.
+AUTO_UPGRADES_OVERRIDE="/etc/apt/apt.conf.d/52auto-upgrades-local"
+UNATTENDED_OVERRIDE="/etc/apt/apt.conf.d/52unattended-upgrades-local"
+
+# -------------------------
+# Helper functions
+# -------------------------
+
+log() {
+  printf '[INFO] %s\n' "$*"
+}
+
+warn() {
+  printf '[WARN] %s\n' "$*" >&2
+}
+
+die() {
+  printf '[ERROR] %s\n' "$*" >&2
+  exit 1
+}
+
+require_root() {
+  [[ "${EUID}" -eq 0 ]] || die "Run this script as root."
+}
+
+require_ubuntu() {
+  [[ -r /etc/os-release ]] || die "/etc/os-release not found."
+
+  # shellcheck disable=SC1091
+  . /etc/os-release
+
+  [[ "${ID:-}" == "ubuntu" ]] || die "This script is intended for Ubuntu. Detected ID=${ID:-unknown}."
+}
+
+is_true() {
+  case "${1}" in
+    yes|true|1) return 0 ;;
+    no|false|0) return 1 ;;
+    *) die "Invalid boolean value '${1}'. Allowed: yes|no|true|false|1|0" ;;
+  esac
+}
+
+validate_non_negative_integer() {
+  local value="$1"
+  local name="$2"
+
+  [[ "${value}" =~ ^[0-9]+$ ]] || die "${name} must be a non-negative integer."
+}
+
+validate_zero_or_one() {
+  local value="$1"
+  local name="$2"
+
+  [[ "${value}" =~ ^[01]$ ]] || die "${name} must be 0 or 1."
+}
+
+validate_reboot_time() {
+  local value="$1"
+  [[ "${value}" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "AUTO_REBOOT_TIME must be in HH:MM format, e.g. 03:00."
+}
+
+apt_periodic_effective_enabled() {
+  # Returns success if unattended-upgrades is effectively enabled
+  # in any apt.conf.d fragment.
+  apt-config dump 2>/dev/null | grep -Eq '^APT::Periodic::Unattended-Upgrade "1";$'
+}
+
+timer_exists() {
+  local unit="$1"
+  systemctl list-unit-files --type=timer --no-legend 2>/dev/null | awk '{print $1}' | grep -Fxq "${unit}"
+}
+
+show_timer_status() {
+  local unit="$1"
+  if timer_exists "${unit}"; then
+    systemctl status "${unit}" --no-pager -l || true
+  else
+    warn "systemd timer ${unit} was not found."
+  fi
+}
+
+# -------------------------
+# Writers
+# -------------------------
+
+write_auto_upgrades_override() {
+  log "Writing local APT periodic override to ${AUTO_UPGRADES_OVERRIDE}."
+
+  cat > "${AUTO_UPGRADES_OVERRIDE}" <<EOF
+// Local override for APT periodic behavior.
+// Keep packaged defaults intact and override only the requested values.
+
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "${AUTOCLEAN_INTERVAL_DAYS}";
+APT::Periodic::Verbose "${ENABLE_VERBOSE_APT}";
+EOF
+}
+
+write_unattended_override() {
+  log "Writing local unattended-upgrades override to ${UNATTENDED_OVERRIDE}."
+
+  {
+    cat <<'EOF'
+// Local override for unattended-upgrades.
+// Intentionally does NOT redefine Allowed-Origins or Origins-Pattern,
+// so Ubuntu defaults (including ESM/Ubuntu Pro when available) remain intact.
+EOF
+
+    if is_true "${AUTO_REBOOT}"; then
+      cat <<EOF
+
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "${AUTO_REBOOT_TIME}";
+EOF
+    else
+      cat <<'EOF'
+
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+    fi
+  } > "${UNATTENDED_OVERRIDE}"
+}
+
+# -------------------------
+# Main
+# -------------------------
+
+main() {
+  require_root
+  require_ubuntu
+
+  validate_zero_or_one "${ENABLE_VERBOSE_APT}" "ENABLE_VERBOSE_APT"
+  validate_non_negative_integer "${AUTOCLEAN_INTERVAL_DAYS}" "AUTOCLEAN_INTERVAL_DAYS"
+
+  # Validate AUTO_REBOOT as a boolean first.
+  is_true "${AUTO_REBOOT}" || true
+
+  # Only validate reboot time if reboot is enabled.
+  if is_true "${AUTO_REBOOT}"; then
+    validate_reboot_time "${AUTO_REBOOT_TIME}"
+  fi
+
+  export DEBIAN_FRONTEND=noninteractive
+
+  log "Updating package lists..."
+  apt-get update
+
+  if is_true "${INSTALL_APT_LISTCHANGES}"; then
+    log "Installing unattended-upgrades and apt-listchanges..."
+    apt-get install -y unattended-upgrades apt-listchanges
+  else
+    log "Installing unattended-upgrades..."
+    apt-get install -y unattended-upgrades
+  fi
+
+  if apt_periodic_effective_enabled; then
+    log "unattended-upgrades is already effectively enabled."
+  else
+    log "unattended-upgrades is not effectively enabled yet. A local override will enable it."
+  fi
+
+  write_auto_upgrades_override
+  write_unattended_override
+
+  log "Running unattended-upgrade dry-run..."
+  unattended-upgrade --debug --dry-run
+
+  log "Checking systemd timers related to apt..."
+  show_timer_status apt-daily.timer
+  show_timer_status apt-daily-upgrade.timer
+
+  log "Done."
+  log "Relevant config files:"
+  log "  - ${AUTO_UPGRADES_OVERRIDE}"
+  log "  - ${UNATTENDED_OVERRIDE}"
+  log "Packaged defaults remain in place, especially:"
+  log "  - /etc/apt/apt.conf.d/20auto-upgrades"
+  log "  - /etc/apt/apt.conf.d/50unattended-upgrades"
+  log "Logs: /var/log/unattended-upgrades/"
+}
+
+main "$@"
