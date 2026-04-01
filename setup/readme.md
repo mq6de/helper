@@ -146,6 +146,16 @@ If one of these values is empty, the script may ask for it interactively.
 
 ---
 
+## setup-nodeinfo.sh
+
+Display some informations.
+
+### Run
+```bash
+curl -fsSL https://raw.githubusercontent.com/mq6de/helper/main/setup/setup-nodeinfo.sh | sudo bash
+```
+
+
 ## Notes
 
 - These scripts are intended mainly for Ubuntu hosts.
