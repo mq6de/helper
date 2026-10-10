@@ -46,6 +46,17 @@ done && \
 echo "== Letzter Sync ==" && \
 sudo journalctl -u "github-keys-$U.service" -n 3 --no-pager
 ```
+### Automatic Full Upgrade (Ubuntu)
+
+Dieses Skript richtet automatische Systemupdates unter Ubuntu ein.
+Es führt täglich ein vollständiges Paketupgrade durch, entfernt nicht mehr benötigte Pakete und startet das System bei Bedarf automatisch neu.
+Updatezeitpunkt, Neustart und Paketbereinigung können über Variablen im Skript angepasst werden.
+
+**Installation:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mq6de/helper/main/setup/auto-fullupgrade.sh | sudo bash
+
 ### Wichtiger Hinweis
 
 Dies ist ein privates Projekt und ausschließlich für Testzwecke gedacht.  
