@@ -54,8 +54,13 @@ Updatezeitpunkt, Neustart und Paketbereinigung können über Variablen im Skript
 
 **Installation:**
 
+
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mq6de/helper/main/setup/auto-fullupgrade.sh | sudo ```bash
+
+curl -fsSL https://raw.githubusercontent.com/mq6de/helper/main/setup/auto-fullupgrade.sh | sudo bash
+
+```
 
 ### Wichtiger Hinweis
 
